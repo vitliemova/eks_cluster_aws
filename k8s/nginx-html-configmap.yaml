@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-custom-html
+  namespace: private-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="bg">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Kubernetes Demo</title>
+      <style>
+        body {
+          margin: 0;
+          min-height: 100vh;
+          font-family: Arial, Helvetica, sans-serif;
+          background: linear-gradient(135deg, #0f172a, #1e3a8a, #2563eb);
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .card {
+          width: min(900px, 90%);
+          background: rgba(255, 255, 255, 0.12);
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          border-radius: 28px;
+          padding: 44px;
+          box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+          text-align: center;
+          backdrop-filter: blur(12px);
+        }
+
+        h1 {
+          font-size: clamp(2rem, 5vw, 4rem);
+          margin: 20px 0 12px;
+          line-height: 1.1;
+        }
+
+        p {
+          font-size: 1.25rem;
+          color: #dbeafe;
+          margin: 0 auto;
+          max-width: 680px;
+          line-height: 1.6;
+        }
+
+        .badge {
+          display: inline-block;
+          padding: 8px 16px;
+          border-radius: 999px;
+          background: rgba(34, 197, 94, 0.18);
+          border: 1px solid rgba(134, 239, 172, 0.55);
+          color: #bbf7d0;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          font-size: 0.85rem;
+        }
+
+        .image-wrap {
+          margin: 26px auto;
+          width: min(320px, 80%);
+        }
+
+        .footer {
+          margin-top: 28px;
+          font-size: 0.95rem;
+          color: #bfdbfe;
+        }
+      </style>
+    </head>
+    <body>
+      <main class="card">
+        <div class="badge">EKS Private Cluster Demo</div>
+
+        <div class="image-wrap">
+          <svg viewBox="0 0 420 320" role="img" aria-label="Kubernetes cloud illustration">
+            <defs>
+              <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0%" stop-color="#93c5fd"/>
+                <stop offset="100%" stop-color="#22d3ee"/>
+              </linearGradient>
+              <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000000" flood-opacity="0.3"/>
+              </filter>
+            </defs>
+
+            <rect x="40" y="80" width="340" height="190" rx="34" fill="rgba(255,255,255,0.16)" stroke="rgba(255,255,255,0.38)" filter="url(#shadow)"/>
+            <circle cx="210" cy="145" r="72" fill="url(#g1)" opacity="0.95"/>
+
+            <g transform="translate(210 145)">
+              <circle r="46" fill="#1e40af" opacity="0.95"/>
+              <g stroke="#ffffff" stroke-width="8" stroke-linecap="round">
+                <line x1="0" y1="-34" x2="0" y2="-18"/>
+                <line x1="0" y1="18" x2="0" y2="34"/>
+                <line x1="-34" y1="0" x2="-18" y2="0"/>
+                <line x1="18" y1="0" x2="34" y2="0"/>
+                <line x1="-24" y1="-24" x2="-13" y2="-13"/>
+                <line x1="13" y1="13" x2="24" y2="24"/>
+                <line x1="24" y1="-24" x2="13" y2="-13"/>
+                <line x1="-13" y1="13" x2="-24" y2="24"/>
+              </g>
+              <circle r="13" fill="#ffffff"/>
+            </g>
+
+            <g fill="#dbeafe">
+              <rect x="92" y="222" width="72" height="18" rx="9"/>
+              <rect x="176" y="222" width="72" height="18" rx="9"/>
+              <rect x="260" y="222" width="72" height="18" rx="9"/>
+            </g>
+
+            <g fill="#86efac">
+              <circle cx="128" cy="231" r="5"/>
+              <circle cx="212" cy="231" r="5"/>
+              <circle cx="296" cy="231" r="5"/>
+            </g>
+          </svg>
+        </div>
+
+        <h1>Добре дошъл в света на Kubernetes</h1>
+        <p>
+          Това приложение се сервира от Nginx pod, стартиран върху EKS worker nodes
+          в private subnets.
+        </p>
+
+        <div class="footer">
+          Powered by Terraform · Amazon EKS · Private VPC
+        </div>
+      </main>
+    </body>
+    </html>
