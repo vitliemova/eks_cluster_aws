@@ -8,6 +8,7 @@ resource "aws_security_group" "vpc_endpoints" {
   })
 }
 
+
 resource "aws_security_group_rule" "nodes_to_vpc_endpoints_https" {
   type                     = "ingress"
   description              = "Allow EKS nodes to access interface endpoints over HTTPS"
@@ -16,6 +17,26 @@ resource "aws_security_group_rule" "nodes_to_vpc_endpoints_https" {
   protocol                 = "tcp"
   security_group_id        = aws_security_group.vpc_endpoints.id
   source_security_group_id = aws_security_group.eks_nodes.id
+}
+
+resource "aws_security_group_rule" "cluster_sg_to_vpc_endpoints_https" {
+  type                     = "ingress"
+  description              = "Allow EKS cluster security group to access interface endpoints over HTTPS"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.vpc_endpoints.id
+  source_security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+}
+
+resource "aws_security_group_rule" "vpc_cidr_to_vpc_endpoints_https" {
+  type              = "ingress"
+  description       = "Allow HTTPS access to interface endpoints from within the VPC"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  security_group_id = aws_security_group.vpc_endpoints.id
+  cidr_blocks       = [var.vpc_cidr]
 }
 
 resource "aws_vpc_endpoint" "s3" {
