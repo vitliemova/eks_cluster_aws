@@ -102,3 +102,13 @@ output "ssm_vpc_endpoint_id" {
   description = "SSM Interface VPC endpoint ID."
   value       = aws_vpc_endpoint.ssm.id
 }
+
+output "aws_load_balancer_controller_role_arn" {
+  description = "IAM role ARN used by AWS Load Balancer Controller."
+  value       = aws_iam_role.aws_load_balancer_controller.arn
+}
+
+output "aws_load_balancer_controller_release" {
+  description = "Helm release name for AWS Load Balancer Controller."
+  value       = helm_release.aws_load_balancer_controller.name
+}
