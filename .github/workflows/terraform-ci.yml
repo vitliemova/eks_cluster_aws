@@ -17,7 +17,7 @@ on:
       - "**.tfvars"
       - ".github/workflows/**"
       - "aws-load-balancer-controller-iam-policy.json"
-
+      - "test.txt"
 permissions:
   contents: read
   id-token: write
