@@ -1,0 +1,62 @@
+name: Ansible Deploy App
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: "Type DEPLOY to deploy the sample app"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  ansible-deploy:
+    name: Deploy sample app with Ansible
+    runs-on: ubuntu-latest
+    if: ${{ inputs.confirm_deploy == 'DEPLOY' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/stable.txt"
+          KUBECTL_VERSION=$(cat stable.txt)
+          curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pipx
+          pipx ensurepath
+          pipx install --include-deps ansible
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region "$AWS_REGION" \
+            --name homework-private-eks
+
+      - name: Verify Kubernetes access
+        run: kubectl get nodes -o wide
+
+      - name: Deploy sample app
+        run: ansible-playbook -i ansible/inventory.ini ansible/deploy-app.yml
