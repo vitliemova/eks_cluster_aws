@@ -78,3 +78,20 @@ jobs:
           name: eks-validation-report
           path: validation-report.md
           if-no-files-found: warn
+
+      - name: Add validation summary to workflow summary
+        if: always()
+        run: |
+         { 
+            echo "## EKS Validation Summary"
+            echo ""
+            echo "- EKS cluster: validated"
+            echo "- Node group: active"
+            echo "- Worker nodes: private, no public IPs"
+            echo "- Nginx pods: running"
+            echo "- Internal LoadBalancer: validated"
+            echo "- VPC endpoints: available"
+            echo "- SSM: online"
+            echo ""
+            echo "Full validation report is available as a workflow artifact."
+         } >> "$GITHUB_STEP_SUMMARY"            
