@@ -69,7 +69,7 @@ jobs:
 
       - name: Run Ansible validation
         run: |
-          ansible-playbook ansible/validate_terraform_eks.yml
+          ansible-playbook -i ansible/inventory.ini ansible/validate_terraform_eks.yml
 
       - name: Upload validation report
         if: always()
