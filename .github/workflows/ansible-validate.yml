@@ -1,0 +1,80 @@
+name: Ansible Validate EKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_validation:
+        description: "Type VALIDATE to run Ansible validation"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  ansible-validate:
+    name: Run Ansible EKS validation
+    runs-on: ubuntu-latest
+    if: ${{ inputs.confirm_validation == 'VALIDATE' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Show AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/stable.txt"
+          KUBECTL_VERSION=$(cat stable.txt)
+          curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pipx
+          pipx ensurepath
+          pipx install --include-deps ansible
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show Ansible version
+        run: |
+          ansible --version
+          ansible-playbook --version
+
+      - name: Configure kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region "$AWS_REGION" \
+            --name homework-private-eks
+
+      - name: Verify Kubernetes access
+        run: |
+          kubectl get nodes -o wide
+
+      - name: Run Ansible validation
+        run: |
+          ansible-playbook ansible/validate_terraform_eks.yml
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eks-validation-report
+          path: validation-report.md
+          if-no-files-found: warn
