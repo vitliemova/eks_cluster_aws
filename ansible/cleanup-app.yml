@@ -1,0 +1,16 @@
+---
+- name: Cleanup sample Nginx application
+  hosts: local
+  gather_facts: false
+
+  tasks:
+    - name: Delete Kubernetes manifests
+      ansible.builtin.command: kubectl delete -f k8s/ --ignore-not-found=true
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      register: delete_result
+      changed_when: "'deleted' in delete_result.stdout"
+
+    - name: Show delete result
+      ansible.builtin.debug:
+        msg: "{{ delete_result.stdout_lines }}"

@@ -1,0 +1,467 @@
+---
+- name: Validate EKS private cluster deployment
+  hosts: local
+  gather_facts: false
+
+  vars:
+    aws_region: "eu-central-1"
+    cluster_name: "homework-private-eks"
+    node_group_name: "homework-private-eks-private-ng"
+    k8s_namespace: "private-demo"
+    service_name: "nginx-internal"
+    expected_vpc_id: "vpc-02d9f8452c1113c49"
+
+    expected_private_cidrs:
+      - "10.0.10."
+      - "10.0.11."
+
+    expected_vpc_endpoint_services:
+      - "com.amazonaws.eu-central-1.s3"
+      - "com.amazonaws.eu-central-1.ssm"
+      - "com.amazonaws.eu-central-1.ecr.api"
+      - "com.amazonaws.eu-central-1.ec2messages"
+      - "com.amazonaws.eu-central-1.ssmmessages"
+      - "com.amazonaws.eu-central-1.ecr.dkr"
+
+  tasks:
+    ###########################################################################
+    # 00. Pre-flight
+    ###########################################################################
+
+    - name: "00.01 - Validate AWS identity"
+      ansible.builtin.command: aws sts get-caller-identity --output json
+      register: aws_identity
+      changed_when: false
+
+    - name: "00.02 - Print AWS identity"
+      ansible.builtin.debug:
+        msg: "{{ aws_identity.stdout | from_json }}"
+
+    - name: "00.03 - Validate kubectl can reach the cluster"
+      ansible.builtin.command: kubectl cluster-info
+      register: kubectl_cluster_info
+      changed_when: false
+
+    - name: "00.04 - Print kubectl cluster info"
+      ansible.builtin.debug:
+        msg: "{{ kubectl_cluster_info.stdout_lines }}"
+
+    ###########################################################################
+    # 01. Validate nodes are private, Ready, and from private subnet ranges
+    ###########################################################################
+
+    - name: "01.01 - Get Kubernetes nodes wide output"
+      ansible.builtin.command: kubectl get nodes -o wide
+      register: nodes_wide
+      changed_when: false
+
+    - name: "01.02 - Print Kubernetes nodes"
+      ansible.builtin.debug:
+        msg: "{{ nodes_wide.stdout_lines }}"
+
+    - name: "01.03 - Get Kubernetes nodes as JSON"
+      ansible.builtin.command: kubectl get nodes -o json
+      register: nodes_json_raw
+      changed_when: false
+
+    - name: "01.04 - Store Kubernetes nodes JSON"
+      ansible.builtin.set_fact:
+        nodes_json: "{{ nodes_json_raw.stdout | from_json }}"
+
+    - name: "01.05 - Validate at least 2 Kubernetes nodes exist"
+      ansible.builtin.assert:
+        that:
+          - nodes_json['items'] | length >= 2
+        fail_msg: "Expected at least 2 Kubernetes nodes."
+        success_msg: "OK: At least 2 Kubernetes nodes exist."
+
+    - name: "01.06 - Validate all Kubernetes nodes are Ready"
+      ansible.builtin.assert:
+        that:
+          - >
+            nodes_json['items']
+            | map(attribute='status.conditions')
+            | map('selectattr', 'type', 'equalto', 'Ready')
+            | map('selectattr', 'status', 'equalto', 'True')
+            | map('list')
+            | map('length')
+            | min > 0
+        fail_msg: "One or more Kubernetes nodes are not Ready."
+        success_msg: "OK: All Kubernetes nodes are Ready."
+
+    - name: "01.07 - Extract Kubernetes node IP details"
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl get nodes -o wide --no-headers | awk '{print $1, $2, $6, $7}'
+      args:
+        executable: /bin/bash
+      register: node_ip_details
+      changed_when: false
+
+    - name: "01.08 - Print Kubernetes node IP details"
+      ansible.builtin.debug:
+        msg:
+          - "Format: NODE STATUS INTERNAL-IP EXTERNAL-IP"
+          - "{{ node_ip_details.stdout_lines }}"
+
+    - name: "01.09 - Validate Kubernetes node internal IPs are from expected private ranges"
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl get nodes -o wide --no-headers | awk '{print $6}' | grep -Ev '^(10\.0\.10\.|10\.0\.11\.)' || true
+      args:
+        executable: /bin/bash
+      register: nodes_outside_private_ranges
+      changed_when: false
+      failed_when: nodes_outside_private_ranges.stdout != ""
+
+    - name: "01.10 - Validate Kubernetes nodes have no external IP"
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl get nodes -o wide --no-headers | awk '{print $7}' | grep -v '^<none>$' || true
+      args:
+        executable: /bin/bash
+      register: nodes_with_external_ip
+      changed_when: false
+      failed_when: nodes_with_external_ip.stdout != ""
+
+    - name: "01.11 - Print node privacy validation"
+      ansible.builtin.debug:
+        msg:
+          - "OK: Kubernetes node internal IPs are from 10.0.10.0/24 or 10.0.11.0/24."
+          - "OK: Kubernetes node EXTERNAL-IP values are <none>."
+
+    ###########################################################################
+    # 02. Validate pods are scheduled on private nodes
+    ###########################################################################
+
+    - name: "02.01 - Get Nginx pods wide output"
+      ansible.builtin.command: kubectl get pods -n {{ k8s_namespace }} -o wide
+      register: pods_wide
+      changed_when: false
+
+    - name: "02.02 - Print Nginx pods"
+      ansible.builtin.debug:
+        msg: "{{ pods_wide.stdout_lines }}"
+
+    - name: "02.03 - Validate Nginx pods exist"
+      ansible.builtin.shell: |
+        kubectl get pods -n {{ k8s_namespace }} -l app=nginx --no-headers | wc -l
+      register: nginx_pod_count
+      changed_when: false
+      failed_when: nginx_pod_count.stdout | int < 1
+
+    - name: "02.04 - Validate all Nginx pods are Running"
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl get pods -n {{ k8s_namespace }} -l app=nginx --no-headers | awk '{print $3}' | grep -v '^Running$' || true
+      args:
+        executable: /bin/bash
+      register: non_running_pods
+      changed_when: false
+      failed_when: non_running_pods.stdout != ""
+
+    - name: "02.05 - Validate Nginx pods are scheduled on private nodes"
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl get pods -n {{ k8s_namespace }} -l app=nginx -o wide --no-headers | awk '{print $7}' | grep -Ev '^ip-10-0-(10|11)-[0-9]+\.eu-central-1\.compute\.internal$' || true
+      args:
+        executable: /bin/bash
+      register: pods_not_on_private_nodes
+      changed_when: false
+      failed_when: pods_not_on_private_nodes.stdout != ""
+
+    - name: "02.06 - Print pod scheduling validation"
+      ansible.builtin.debug:
+        msg:
+          - "OK: Nginx pods exist."
+          - "OK: Nginx pods are Running."
+          - "OK: Nginx pods are scheduled on private worker nodes."
+
+    ###########################################################################
+    # 03. Validate EC2 worker nodes have no public IP
+    ###########################################################################
+
+    - name: "03.01 - Get EC2 worker node details"
+      ansible.builtin.command: >
+        aws ec2 describe-instances
+        --region {{ aws_region }}
+        --filters
+        Name=tag:eks:cluster-name,Values={{ cluster_name }}
+        Name=instance-state-name,Values=running
+        --query "Reservations[].Instances[].{InstanceId:InstanceId,PrivateIpAddress:PrivateIpAddress,PublicIpAddress:PublicIpAddress,SubnetId:SubnetId,State:State.Name}"
+        --output json
+      register: ec2_workers_raw
+      changed_when: false
+
+    - name: "03.02 - Store EC2 worker node details"
+      ansible.builtin.set_fact:
+        ec2_workers: "{{ ec2_workers_raw.stdout | from_json }}"
+
+    - name: "03.03 - Print EC2 worker node details"
+      ansible.builtin.debug:
+        msg: "{{ ec2_workers }}"
+
+    - name: "03.04 - Validate at least 2 running EC2 worker nodes exist"
+      ansible.builtin.assert:
+        that:
+          - ec2_workers | length >= 2
+        fail_msg: "Expected at least 2 running EC2 worker nodes."
+        success_msg: "OK: At least 2 running EC2 worker nodes exist."
+
+    - name: "03.05 - Validate EC2 worker nodes have no public IP"
+      ansible.builtin.assert:
+        that:
+          - ec2_workers | selectattr('PublicIpAddress', 'defined') | selectattr('PublicIpAddress', 'ne', None) | list | length == 0
+        fail_msg: "One or more EC2 worker nodes have a public IP."
+        success_msg: "OK: EC2 worker nodes have no public IP."
+
+    - name: "03.06 - Validate EC2 worker nodes are running"
+      ansible.builtin.assert:
+        that:
+          - ec2_workers | selectattr('State', 'ne', 'running') | list | length == 0
+        fail_msg: "One or more EC2 worker nodes are not running."
+        success_msg: "OK: EC2 worker nodes are running."
+
+    ###########################################################################
+    # 04. Validate internal LoadBalancer
+    ###########################################################################
+
+    - name: "04.01 - Get Kubernetes service details"
+      ansible.builtin.command: kubectl get svc {{ service_name }} -n {{ k8s_namespace }}
+      register: svc_output
+      changed_when: false
+
+    - name: "04.02 - Print Kubernetes service"
+      ansible.builtin.debug:
+        msg: "{{ svc_output.stdout_lines }}"
+
+    - name: "04.03 - Validate Kubernetes service type is LoadBalancer"
+      ansible.builtin.command: kubectl get svc {{ service_name }} -n {{ k8s_namespace }} -o jsonpath='{.spec.type}'
+      register: service_type
+      changed_when: false
+      failed_when: service_type.stdout != "LoadBalancer"
+
+    - name: "04.04 - Get Kubernetes LoadBalancer DNS name"
+      ansible.builtin.command: kubectl get svc {{ service_name }} -n {{ k8s_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+      register: lb_dns
+      changed_when: false
+      failed_when: lb_dns.stdout == ""
+
+    - name: "04.05 - Print Kubernetes LoadBalancer DNS name"
+      ansible.builtin.debug:
+        msg:
+          - "Service type: {{ service_type.stdout }}"
+          - "LoadBalancer DNS: {{ lb_dns.stdout }}"
+
+    - name: "04.06 - Get AWS LoadBalancer details"
+      ansible.builtin.command: >
+        aws elbv2 describe-load-balancers
+        --region {{ aws_region }}
+        --query "LoadBalancers[?DNSName=='{{ lb_dns.stdout }}'].{LoadBalancerName:LoadBalancerName,Scheme:Scheme,DNSName:DNSName,VpcId:VpcId,Type:Type,State:State.Code}"
+        --output json
+      register: aws_lb_raw
+      changed_when: false
+
+    - name: "04.07 - Store AWS LoadBalancer details"
+      ansible.builtin.set_fact:
+        aws_lb: "{{ aws_lb_raw.stdout | from_json }}"
+
+    - name: "04.08 - Print AWS LoadBalancer details"
+      ansible.builtin.debug:
+        msg: "{{ aws_lb }}"
+
+    - name: "04.09 - Validate AWS LoadBalancer exists"
+      ansible.builtin.assert:
+        that:
+          - aws_lb | length == 1
+        fail_msg: "Expected exactly one AWS LoadBalancer matching Kubernetes service DNS."
+        success_msg: "OK: AWS LoadBalancer exists."
+
+    - name: "04.10 - Validate AWS LoadBalancer scheme is internal"
+      ansible.builtin.assert:
+        that:
+          - aws_lb[0].Scheme == "internal"
+        fail_msg: "AWS LoadBalancer scheme is not internal."
+        success_msg: "OK: AWS LoadBalancer scheme is internal."
+
+    - name: "04.11 - Validate AWS LoadBalancer belongs to expected VPC"
+      ansible.builtin.assert:
+        that:
+          - aws_lb[0].VpcId == expected_vpc_id
+        fail_msg: "AWS LoadBalancer is not in the expected VPC."
+        success_msg: "OK: AWS LoadBalancer is in the expected VPC."
+
+    ###########################################################################
+    # 05. Validate application response
+    ###########################################################################
+
+    - name: "05.01 - Validate application response contains expected text"
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl run curl-test-ansible \
+          --namespace {{ k8s_namespace }} \
+          --image=curlimages/curl:latest \
+          --rm -i \
+          --restart=Never \
+          --command -- sh -c "curl -s http://{{ service_name }}.{{ k8s_namespace }}.svc.cluster.local | grep 'Добре дошъл' | sed 's/<[^>]*>//g' | xargs"
+      args:
+        executable: /bin/bash
+      register: app_response
+      changed_when: false
+      failed_when: "'Добре дошъл в света на Kubernetes' not in app_response.stdout"
+
+    - name: "05.02 - Print application response"
+      ansible.builtin.debug:
+        msg: "{{ app_response.stdout_lines }}"
+
+    ###########################################################################
+    # 06. Validate VPC endpoints
+    ###########################################################################
+
+    - name: "06.01 - Get VPC endpoint details"
+      ansible.builtin.command: >
+        aws ec2 describe-vpc-endpoints
+        --region {{ aws_region }}
+        --filters Name=vpc-id,Values={{ expected_vpc_id }}
+        --query "VpcEndpoints[].{VpcEndpointId:VpcEndpointId,ServiceName:ServiceName,VpcEndpointType:VpcEndpointType,State:State}"
+        --output json
+      register: vpc_endpoints_raw
+      changed_when: false
+
+    - name: "06.02 - Store VPC endpoint details"
+      ansible.builtin.set_fact:
+        vpc_endpoints: "{{ vpc_endpoints_raw.stdout | from_json }}"
+
+    - name: "06.03 - Print VPC endpoints"
+      ansible.builtin.debug:
+        msg: "{{ vpc_endpoints }}"
+
+    - name: "06.04 - Validate all expected VPC endpoints exist"
+      ansible.builtin.assert:
+        that:
+          - item in (vpc_endpoints | map(attribute='ServiceName') | list)
+        fail_msg: "Missing VPC endpoint for {{ item }}"
+        success_msg: "OK: VPC endpoint exists for {{ item }}"
+      loop: "{{ expected_vpc_endpoint_services }}"
+
+    - name: "06.05 - Validate all VPC endpoints are available"
+      ansible.builtin.assert:
+        that:
+          - vpc_endpoints | selectattr('State', 'ne', 'available') | list | length == 0
+        fail_msg: "One or more VPC endpoints are not available."
+        success_msg: "OK: All VPC endpoints are available."
+
+    - name: "06.06 - Validate S3 endpoint is Gateway"
+      ansible.builtin.assert:
+        that:
+          - >
+            vpc_endpoints
+            | selectattr('ServiceName', 'equalto', 'com.amazonaws.eu-central-1.s3')
+            | selectattr('VpcEndpointType', 'equalto', 'Gateway')
+            | list
+            | length == 1
+        fail_msg: "S3 VPC endpoint is missing or is not Gateway type."
+        success_msg: "OK: S3 VPC endpoint is Gateway type."
+
+    - name: "06.07 - Validate ECR and SSM endpoints are Interface endpoints"
+      ansible.builtin.assert:
+        that:
+          - >
+            vpc_endpoints
+            | selectattr('ServiceName', 'equalto', item)
+            | selectattr('VpcEndpointType', 'equalto', 'Interface')
+            | list
+            | length == 1
+        fail_msg: "{{ item }} endpoint is missing or is not Interface type."
+        success_msg: "OK: {{ item }} endpoint is Interface type."
+      loop:
+        - "com.amazonaws.eu-central-1.ssm"
+        - "com.amazonaws.eu-central-1.ecr.api"
+        - "com.amazonaws.eu-central-1.ec2messages"
+        - "com.amazonaws.eu-central-1.ssmmessages"
+        - "com.amazonaws.eu-central-1.ecr.dkr"
+
+    ###########################################################################
+    # 99. Final summary
+    ###########################################################################
+
+    - name: "99.01 - Print validation summary"
+      ansible.builtin.debug:
+        msg:
+          - "OK: Kubernetes nodes are Ready"
+          - "OK: Node internal IPs are from 10.0.10.0/24 and 10.0.11.0/24"
+          - "OK: Kubernetes nodes have no external IP"
+          - "OK: Nginx pods are Running"
+          - "OK: Pods are scheduled on private nodes"
+          - "OK: EC2 worker nodes have no public IP"
+          - "OK: Internal LoadBalancer exists"
+          - "OK: AWS LoadBalancer scheme is internal"
+          - "OK: Application response contains expected text"
+          - "OK: Required VPC endpoints exist"
+          - "OK: VPC endpoints are available"
+    - name: Write validation report
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir }}/../validation-report.md"
+        mode: "0644"
+        content: |
+          # EKS Validation Report
+
+          ## Result
+
+          All validation checks passed.
+
+          ## Kubernetes Nodes
+
+          ```text
+          {{ nodes_wide.stdout }}
+          ```
+
+          ## Nginx Pods
+
+          ```text
+          {{ pods_wide.stdout }}
+          ```
+
+          ## Kubernetes Service
+
+          ```text
+          {{ svc_output.stdout }}
+          ```
+
+          ## AWS Load Balancer
+
+          ```json
+          {{ aws_lb | to_nice_json }}
+          ```
+
+          ## EC2 Worker Nodes
+
+          ```json
+          {{ ec2_workers | to_nice_json }}
+          ```
+
+          ## VPC Endpoints
+
+          ```json
+          {{ vpc_endpoints | to_nice_json }}
+          ```
+
+          ## Application Response
+
+          ```text
+          {{ app_response.stdout }}
+          ```
+
+          ## Validation Summary
+
+          - OK: Kubernetes nodes are Ready
+          - OK: Node internal IPs are from 10.0.10.0/24 and 10.0.11.0/24
+          - OK: Kubernetes nodes have no external IP
+          - OK: Nginx pods are Running
+          - OK: Pods are scheduled on private nodes
+          - OK: EC2 worker nodes have no public IP
+          - OK: Internal LoadBalancer exists
+          - OK: AWS LoadBalancer scheme is internal
+          - OK: Application response contains expected text
+          - OK: Required VPC endpoints exist
+          - OK: VPC endpoints are available            

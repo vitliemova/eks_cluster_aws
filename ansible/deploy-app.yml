@@ -1,0 +1,16 @@
+---
+- name: Deploy sample Nginx application
+  hosts: local
+  gather_facts: false
+
+  tasks:
+    - name: Apply Kubernetes manifests
+      ansible.builtin.command: kubectl apply -f k8s/
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: "'configured' in apply_result.stdout or 'created' in apply_result.stdout"
+      register: apply_result
+
+    - name: Show apply result
+      ansible.builtin.debug:
+        msg: "{{ apply_result.stdout_lines }}"
