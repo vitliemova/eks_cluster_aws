@@ -1,0 +1,5 @@
+aws_region                  = "eu-central-1"
+github_owner                = "vitliemova"
+github_repo                 = "eks_cluster_aws"
+github_actions_role_name    = "github-actions-terraform-eks-lab-role"
+terraform_state_bucket_name = "terraform-state-eks-lab-305780339972"
